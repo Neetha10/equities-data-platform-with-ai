@@ -1,8 +1,8 @@
 # Equities Data Platform with Verified AI Daily Brief
 
-An end-of-day US equities pipeline for a curated liquid-stock universe. It ingests daily and minute bars into PostgreSQL, executes seven desk-style analytics queries on a custom in-memory engine, and writes a short Markdown and HTML market brief. An LLM can draft the prose, but a numerical gate rejects any claim not found in the exact query-result ledger; a deterministic verified fallback is always available.
+An end-of-day US equities pipeline for a curated liquid-stock universe. It ingests daily and minute bars into PostgreSQL, executes seven desk-style analytics queries on a custom in-memory engine, and writes a short Markdown and HTML market brief. Every number in an AI-written brief is checked against the query results; if a number does not match, the draft is discarded and a template brief is saved instead.
 
-> Status: Phases 1–4 are implemented. PostgreSQL is the durable store and the custom engine is the default nightly analytics backend. Benchmark code is included, but no performance figures are claimed until measured on the target machine.
+> Status: Phases 1–4 are implemented. PostgreSQL is the durable store and the custom engine is the default nightly analytics backend. The measured results below are from the recorded 2026-10-15 snapshot and should be rerun after any data, machine, or engine change.
 
 ## Architecture
 
@@ -14,11 +14,11 @@ flowchart LR
   I --> P[(PostgreSQL)]
   P --> E[Columnar engine + B+ tree]
   E --> Q[7 desk queries]
-  Q --> F[Fact ledger]
+  Q --> F[Verified query results]
   F --> L[Optional LLM draft]
-  L --> V{Every number in results?}
+  L --> V{Every number matches?}
   V -->|yes| O[Markdown + HTML daily brief]
-  V -->|no / no API key| D[Deterministic brief]
+  V -->|no / unavailable model| D[Template brief]
   D --> O
 ```
 
@@ -64,7 +64,7 @@ The 100-symbol seed universe is deliberately editable. Keep it to liquid US-list
 
 ## Data-provider notes
 
-The default `ALPACA_FEED=iex` is suitable for Alpaca's free market-data offering. `sip` is a configuration option only for accounts entitled to the consolidated feed; the pipeline records the selected feed on every bar. Alpaca documents the difference between the feeds and historical `feed` parameter in its [Market Data FAQ](https://docs.alpaca.markets/us/docs/market-data-faq).
+This project currently uses `ALPACA_FEED=iex`. Its volume and VWAP calculations therefore use IEX trades only, not consolidated-market volume. `sip` remains a configuration option for accounts entitled to the consolidated feed; the pipeline records the selected feed on every bar. Alpaca documents the difference between the feeds and historical `feed` parameter in its [Market Data FAQ](https://docs.alpaca.markets/us/docs/market-data-faq).
 
 The SEC reference loader calls the ticker reference once, then reads each universe issuer's submissions profile to collect SIC metadata. It uses the configured identifying User-Agent and paces profile reads at roughly 9 per second. Extend EDGAR access conservatively: the SEC requests efficient scripts, an identifying User-Agent, and currently advises staying at or below 10 requests per second. See [SEC developer resources](https://www.sec.gov/about/developer-resources) and [Accessing EDGAR data](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data).
 
@@ -81,20 +81,16 @@ Install it with `crontab -e` only after the manual `make nightly` succeeds. Cron
 
 ## Verification model
 
-1. The versioned query definitions and equivalent engine calculations are the source of every numeric claim.
-2. Result rows form a recursive fact ledger.
-3. The LLM receives only that ledger and is asked for concise, attributed prose.
-4. A numeric-token validator compares every generated number (including dates) to canonical values in the ledger. A mismatch discards the draft.
-5. The deterministic writer is validated by the same gate before saving output.
+The query results are the source of every numeric claim. Cloud LLM providers receive that result set; the local Ollama path rewrites an already-approved template brief. Before any draft is saved, the validator compares its numeric tokens against the relevant query results. A mismatch discards the draft and saves the same checked template. This prevents unsupported numbers, but it does not replace human review of qualitative language or market interpretation.
 
-This prevents unsupported numbers, but it is not a substitute for human review: qualitative causal language and semantic mistakes remain reasons to inspect the source query results.
+## Results
 
-## Engine, benchmarks, and resume evidence
+The engine architecture and reproducible benchmark protocol are in [`engine/README.md`](engine/README.md) and [`docs/benchmarks.md`](docs/benchmarks.md). On the recorded 2026-10-15 snapshot of **100 symbols** and **715,594** bars, the harness ran one warmup plus **20** timed executions per case. Connection setup, hot-window loading, and DuckDB table materialization were excluded from timing.
 
-The engine architecture and reproducible benchmark protocol are in [`engine/README.md`](engine/README.md) and [`docs/benchmarks.md`](docs/benchmarks.md). Fill in generated results only from saved measurements, then use those real figures in resume bullets such as:
+| Workload | Custom engine median | PostgreSQL median | DuckDB median |
+| --- | ---: | ---: | ---: |
+| Daily 30-row range lookup | 0.253 ms | 0.331 ms | 0.589 ms |
+| Minute 390-row range lookup | 7.198 ms | 0.548 ms | 0.624 ms |
+| Sector return / group-by | 17.695 ms | 16.076 ms | 2.850 ms |
 
-- Built a nightly US-equities pipeline for **100 symbols**, backfilled **715,594** price bars, and generated a query-validated daily recap.
-- Implemented a columnar engine with B+ tree range scans; on a 2026-10-15 snapshot it completed a daily range lookup in **0.245 ms median / 0.299 ms p95**, versus PostgreSQL at **6.142 ms / 9.889 ms** and DuckDB at **33.880 ms / 34.615 ms**.
-- Benchmarked limitations honestly: PostgreSQL was faster for the minute-range and sector-group workloads (**6.582 ms** and **13.434 ms** median), compared with the custom engine (**7.241 ms** and **17.273 ms**).
-
-These figures are from 20 timed iterations after one warmup. The raw samples and full summary are retained with the generated artifacts; rerun the benchmark after data, machine, or engine changes.
+The custom engine narrowly wins the indexed daily lookup, while PostgreSQL is much faster for the minute workload. DuckDB wins the vector-friendly minute and group-by queries after typed data is materialized. The custom engine remains a constrained learning implementation: its preloaded columnar window avoids load cost, but its current range-scan and aggregation paths need further optimization. Raw samples and the full benchmark summary are retained with the generated artifacts.

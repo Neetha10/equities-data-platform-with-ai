@@ -4,12 +4,12 @@ Generated from the raw samples beside this file.
 
 | System | Case | Median ms | p95 ms |
 | --- | --- | ---: | ---: |
-| custom_engine | daily_range | 0.245 | 0.299 |
-| custom_engine | minute_range | 7.241 | 8.827 |
-| custom_engine | sector_group | 17.273 | 132.573 |
-| duckdb | daily_range | 33.880 | 34.615 |
-| duckdb | minute_range | 769.613 | 832.348 |
-| duckdb | sector_group | 36.518 | 40.802 |
-| postgres | daily_range | 6.142 | 9.889 |
-| postgres | minute_range | 6.582 | 11.844 |
-| postgres | sector_group | 13.434 | 18.970 |
+| custom_engine | daily_range | 0.253 | 0.271 |
+| custom_engine | minute_range | 7.198 | 7.442 |
+| custom_engine | sector_group | 17.695 | 117.727 |
+| duckdb | daily_range | 0.589 | 0.739 |
+| duckdb | minute_range | 0.624 | 0.807 |
+| duckdb | sector_group | 2.850 | 6.279 |
+| postgres | daily_range | 0.331 | 0.875 |
+| postgres | minute_range | 0.548 | 1.368 |
+| postgres | sector_group | 16.076 | 16.411 |

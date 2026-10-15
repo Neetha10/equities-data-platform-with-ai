@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     alpaca_api_secret: str = ""
     alpaca_feed: str = "iex"
     sec_user_agent: str = "EquitiesDailyBrief admin@example.com"
-    llm_provider: str = "openai"
+    llm_provider: str = "deterministic"
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
     anthropic_api_key: str = ""

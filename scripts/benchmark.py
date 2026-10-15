@@ -24,19 +24,37 @@ def _time(callback, repetitions: int) -> list[float]:
     return timings
 
 
-def _postgres_callback(sql: str, params: tuple):
+def _postgres_callback(conn, sql: str, params: tuple):
     def run() -> list[dict]:
-        with connection() as conn, conn.cursor() as cur:
+        with conn.cursor() as cur:
             cur.execute(sql, params)
             return list(cur.fetchall())
 
     return run
 
 
+def _materialize_duckdb_table(duck, name: str, rows: list[dict], pandas) -> None:
+    """Load typed columns once; benchmark queries, not Python object conversion."""
+    frame = pandas.DataFrame(rows)
+    for column in ("open", "high", "low", "close", "vwap"):
+        if column in frame:
+            frame[column] = pandas.to_numeric(frame[column], errors="raise").astype("float64")
+    if "volume" in frame:
+        frame["volume"] = pandas.to_numeric(frame["volume"], errors="raise").astype("int64")
+    staging_name = f"_{name}_input"
+    duck.register(staging_name, frame)
+    duck.execute(f"CREATE TABLE {name} AS SELECT * FROM {staging_name}")
+    duck.unregister(staging_name)
+
+
 def _write(raw: list[dict], output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     with (output / "raw_samples.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["system", "case", "iteration", "milliseconds"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["system", "case", "iteration", "milliseconds"],
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(raw)
     grouped: dict[tuple[str, str], list[float]] = {}
@@ -82,25 +100,36 @@ def main() -> None:
                     WHERE p.trading_date = %s AND p.prior_close IS NOT NULL GROUP BY c.sector"""
     engine = load_hot_window(args.as_of)
     duck = duckdb.connect(":memory:")
-    duck.register("daily_bars", pd.DataFrame(query("SELECT * FROM daily_bars WHERE trading_date <= %s", (args.as_of,))))
-    duck.register("minute_bars", pd.DataFrame(query("SELECT * FROM minute_bars WHERE ts < (%s::date + INTERVAL '1 day')", (args.as_of,))))
-    duck.register("companies", pd.DataFrame(query("SELECT symbol, sector FROM companies")))
+    _materialize_duckdb_table(
+        duck,
+        "daily_bars",
+        query("SELECT * FROM daily_bars WHERE trading_date <= %s", (args.as_of,)),
+        pd,
+    )
+    _materialize_duckdb_table(
+        duck,
+        "minute_bars",
+        query("SELECT * FROM minute_bars WHERE ts < (%s::date + INTERVAL '1 day')", (args.as_of,)),
+        pd,
+    )
+    _materialize_duckdb_table(duck, "companies", query("SELECT symbol, sector FROM companies"), pd)
     cases = [
         ("daily_range", daily_sql, (args.symbol, start, args.as_of), lambda: engine.execute(f"SELECT symbol, close FROM daily_bars WHERE symbol = '{args.symbol}' AND trading_date >= '{start.isoformat()}' ORDER BY trading_date DESC LIMIT 30").rows),
         ("minute_range", minute_sql, (args.symbol, args.as_of, args.as_of), lambda: engine.execute(f"SELECT symbol, close FROM minute_bars WHERE symbol = '{args.symbol}' AND ts >= '{args.as_of.isoformat()}' ORDER BY ts DESC LIMIT 390").rows),
         ("sector_group", sector_sql, (args.as_of, args.as_of), lambda: sector_performance(engine, args.as_of)),
     ]
     raw: list[dict] = []
-    for case, sql, params, custom in cases:
-        postgres = _postgres_callback(sql, params)
-        duck_sql = sql.replace("%s", "?").replace("::date", "")
-        duck_callback = lambda sql=duck_sql, params=params: duck.execute(sql, params).fetchall()
-        # One warmup per implementation; data loading is intentionally excluded from timings.
-        for callback in (postgres, duck_callback, custom):
-            callback()
-        for system, callback in (("postgres", postgres), ("duckdb", duck_callback), ("custom_engine", custom)):
-            for iteration, milliseconds in enumerate(_time(callback, args.repetitions), start=1):
-                raw.append({"system": system, "case": case, "iteration": iteration, "milliseconds": milliseconds})
+    with connection() as postgres_conn:
+        for case, sql, params, custom in cases:
+            postgres = _postgres_callback(postgres_conn, sql, params)
+            duck_sql = sql.replace("%s", "?").replace("::date", "")
+            duck_callback = lambda sql=duck_sql, params=params: duck.execute(sql, params).fetchall()
+            # One warmup per implementation; connection and data loading are excluded from timings.
+            for callback in (postgres, duck_callback, custom):
+                callback()
+            for system, callback in (("postgres", postgres), ("duckdb", duck_callback), ("custom_engine", custom)):
+                for iteration, milliseconds in enumerate(_time(callback, args.repetitions), start=1):
+                    raw.append({"system": system, "case": case, "iteration": iteration, "milliseconds": milliseconds})
     _write(raw, args.output)
     print(f"wrote {args.output / 'summary.md'} and raw_samples.csv")
 
