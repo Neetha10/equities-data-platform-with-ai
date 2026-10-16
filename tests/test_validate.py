@@ -75,3 +75,32 @@ def test_rejection_is_logged_and_falls_back(monkeypatch, caplog, results: dict[s
     _, _, accepted = brief.create_brief(results, date(2026, 10, 15), tmp_path)
     assert not accepted
     assert "LLM draft rejected by numeric validation" in caplog.text
+
+
+REPLAY_LEDGER = {
+    "02_gainers_losers": [
+        {"direction": "gainer", "symbol": "LRCX", "return_pct": Decimal("6.98")},
+        {"direction": "loser", "symbol": "QCOM", "return_pct": Decimal("-5.82")},
+        {"direction": "gainer", "symbol": "CCI", "return_pct": Decimal("15.60")},
+        {"direction": "loser", "symbol": "CHTR", "return_pct": Decimal("-5.74")},
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Real llama3.2:3b sentences that were wrongly rejected in the 20-session replay.
+        "LRCX led the market at 6.98%, while QCOM was weakest at -5.82%.",
+        "CCI led the market with a 15.60% gain, while CHTR posted a -5.74% loss.",
+    ],
+)
+def test_number_belongs_to_the_ticker_before_it(sentence: str) -> None:
+    validate_numeric_claims(sentence, REPLAY_LEDGER, date(2026, 10, 15))
+
+
+def test_swapped_tickers_in_long_sentence_still_rejected() -> None:
+    with pytest.raises(ValidationError, match="6.98"):
+        validate_numeric_claims(
+            "QCOM led the market at 6.98%, while LRCX was weakest at -5.82%.", REPLAY_LEDGER, date(2026, 10, 15)
+        )

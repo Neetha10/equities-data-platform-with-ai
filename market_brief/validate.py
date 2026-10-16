@@ -80,13 +80,25 @@ def _sentence(text: str, position: int) -> tuple[int, str]:
 
 
 def _nearest_symbol(sentence: str, absolute_position: int, symbols: set[str], sentence_start: int) -> str | None:
-    candidates: list[tuple[int, str]] = []
+    """The ticker a number describes: the closest one before it, else the closest one after it.
+
+    Prose puts the subject first ("LRCX led at 6.98%, while QCOM fell 5.82%"), so a ticker that
+    follows the number usually starts the next clause and must not claim it.
+    """
+    before: list[tuple[int, str]] = []
+    after: list[tuple[int, str]] = []
     for match in re.finditer(r"\b[A-Z][A-Z.\-]{0,9}\b", sentence):
         symbol = match.group()
-        if symbol in symbols:
-            distance = abs((sentence_start + match.start()) - absolute_position)
-            candidates.append((distance, symbol))
-    return min(candidates)[1] if candidates else None
+        if symbol not in symbols:
+            continue
+        position = sentence_start + match.start()
+        if position < absolute_position:
+            before.append((absolute_position - position, symbol))
+        else:
+            after.append((position - absolute_position, symbol))
+    if before:
+        return min(before)[1]
+    return min(after)[1] if after else None
 
 
 def validate_numeric_claims(text: str, results: dict[str, list[dict]], as_of: date) -> None:
