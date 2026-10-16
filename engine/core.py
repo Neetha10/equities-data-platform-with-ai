@@ -37,6 +37,9 @@ class ColumnarTable:
         self.columns = {column: [row.get(column) for row in materialized] for column in names}
         self.row_count = len(materialized)
         self.indexes: dict[tuple[str, ...], BPlusTree[tuple, int]] = {}
+        self.index_bounds: dict[tuple[str, ...], tuple[Scalar, Scalar]] = {}
+        self.grouped_positions: dict[str, dict[Scalar, tuple[int, ...]]] = {}
+        self.cache: dict[str, object] = {}
 
     @classmethod
     def from_rows(cls, name: str, rows: Iterable[dict[str, Scalar]]) -> ColumnarTable:
@@ -49,7 +52,19 @@ class ColumnarTable:
             (tuple(self.columns[column][row_id] for column in columns), row_id)
             for row_id in range(self.row_count)
         ]
-        self.indexes[tuple(columns)] = BPlusTree(items)
+        index_columns = tuple(columns)
+        self.indexes[index_columns] = BPlusTree(items)
+        values = [value for value in self.columns[columns[-1]] if value is not None]
+        if values:
+            self.index_bounds[index_columns] = (min(values), max(values))
+
+    def create_grouped_positions(self, column: str) -> None:
+        if column not in self.columns:
+            raise ValueError(f"cannot group missing column: {column}")
+        groups: dict[Scalar, list[int]] = defaultdict(list)
+        for row_id, value in enumerate(self.columns[column]):
+            groups[value].append(row_id)
+        self.grouped_positions[column] = {value: tuple(row_ids) for value, row_ids in groups.items()}
 
     def row(self, row_id: int) -> dict[str, Scalar]:
         return {column: values[row_id] for column, values in self.columns.items()}
@@ -79,10 +94,9 @@ def _coerce(value: Scalar, target: Scalar) -> Scalar:
     return value
 
 
-def _matches(actual: Scalar, condition: Condition) -> bool:
-    expected = _coerce(condition.value, actual)
+def _matches(actual: Scalar, operator: str, expected: Scalar) -> bool:
     if actual is None:
-        return condition.operator == "!=" and expected is not None
+        return operator == "!=" and expected is not None
     return {
         "=": actual == expected,
         "!=": actual != expected,
@@ -90,7 +104,7 @@ def _matches(actual: Scalar, condition: Condition) -> bool:
         ">=": actual >= expected,
         "<": actual < expected,
         "<=": actual <= expected,
-    }[condition.operator]
+    }[operator]
 
 
 class Engine:
@@ -125,28 +139,32 @@ class Engine:
                 )
         return Plan("full_scan", table.row_count, "no composite index satisfies the predicates")
 
-    def _candidate_ids(self, table: ColumnarTable, query: SelectQuery, plan: Plan) -> list[int]:
+    def _candidate_ids(
+        self,
+        table: ColumnarTable,
+        query: SelectQuery,
+        plan: Plan,
+        prepared: dict[Condition, Scalar],
+    ) -> list[int]:
         if plan.strategy == "full_scan":
             return list(range(table.row_count))
         for columns, index in table.indexes.items():
             first, second = columns[:2]
             equality = next(c for c in query.conditions if c.column == first and c.operator == "=")
-            prototype = table.columns[first][0] if table.row_count else None
-            first_value = _coerce(equality.value, prototype)
+            first_value = prepared[equality]
             lower: Scalar | None = None
             upper: Scalar | None = None
-            second_prototype = table.columns[second][0] if table.row_count else None
             for condition in query.conditions:
                 if condition.column != second:
                     continue
-                value = _coerce(condition.value, second_prototype)
+                value = prepared[condition]
                 if condition.operator in {">", ">="}:
-                    lower = value
+                    lower = value if lower is None else max(lower, value)
                 if condition.operator in {"<", "<="}:
-                    upper = value
-            indexed_values = table.columns[second]
-            low_key = (first_value, lower if lower is not None else min(indexed_values))
-            high_key = (first_value, upper if upper is not None else max(indexed_values))
+                    upper = value if upper is None else min(upper, value)
+            minimum, maximum = table.index_bounds[columns]
+            low_key = (first_value, lower if lower is not None else minimum)
+            high_key = (first_value, upper if upper is not None else maximum)
             return index.range(low_key, high_key)
         return list(range(table.row_count))
 
@@ -163,10 +181,17 @@ class Engine:
             if condition.column not in table.columns:
                 raise KeyError(f"unknown filter column: {condition.column}")
         plan = self.explain(query)
+        prepared: dict[Condition, Scalar] = {}
+        for condition in query.conditions:
+            prototype = next((value for value in table.columns[condition.column] if value is not None), None)
+            prepared[condition] = _coerce(condition.value, prototype)
         row_ids = [
             row_id
-            for row_id in self._candidate_ids(table, query, plan)
-            if all(_matches(table.columns[condition.column][row_id], condition) for condition in query.conditions)
+            for row_id in self._candidate_ids(table, query, plan, prepared)
+            if all(
+                _matches(table.columns[condition.column][row_id], condition.operator, prepared[condition])
+                for condition in query.conditions
+            )
         ]
         # Sort before projection so ORDER BY need not appear in SELECT.
         for term in reversed(query.order_by):

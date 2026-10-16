@@ -39,6 +39,7 @@ def load_hot_window(
     companies_table = ColumnarTable.from_rows("companies", companies)
     daily_table.create_btree_index("symbol", "trading_date")
     minute_table.create_btree_index("symbol", "ts")
+    daily_table.create_grouped_positions("symbol")
     engine.register(daily_table)
     engine.register(minute_table)
     engine.register(companies_table)

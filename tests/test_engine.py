@@ -87,7 +87,8 @@ def test_desk_queries_use_columnar_engine() -> None:
         ColumnarTable.from_rows(
             "minute_bars",
             [
-                {"symbol": "AAA", "ts": datetime(2026, 1, 3, 14, tzinfo=UTC), "close": Decimal("10.5"), "vwap": Decimal("10.4"), "volume": 50}
+                {"symbol": "AAA", "ts": datetime(2026, 1, 3, 14, 30, tzinfo=UTC), "close": Decimal("10.5"), "vwap": Decimal("10.4"), "volume": 50},
+                {"symbol": "AAA", "ts": datetime(2026, 1, 3, 14, tzinfo=UTC), "close": Decimal(99), "vwap": Decimal(99), "volume": 50},
             ],
         )
     )

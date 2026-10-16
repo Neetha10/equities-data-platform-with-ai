@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, time
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
+from zoneinfo import ZoneInfo
 
 from .core import ColumnarTable, Engine
 
@@ -16,12 +17,17 @@ def _round(value: Decimal | float | None, places: str = "0.01") -> Decimal | Non
 
 def _daily_by_symbol(engine: Engine) -> dict[str, list[dict]]:
     table = engine.tables["daily_bars"]
+    cached = table.cache.get("daily_rows_by_symbol")
+    if cached is not None:
+        return cached  # type: ignore[return-value]
+    if "symbol" not in table.grouped_positions:
+        table.create_grouped_positions("symbol")
     result: dict[str, list[dict]] = defaultdict(list)
-    for row_id in range(table.row_count):
-        row = table.row(row_id)
-        result[str(row["symbol"])].append(row)
+    for symbol, row_ids in table.grouped_positions["symbol"].items():
+        result[str(symbol)] = [table.row(row_id) for row_id in row_ids]
     for rows in result.values():
         rows.sort(key=lambda row: row["trading_date"])
+    table.cache["daily_rows_by_symbol"] = result
     return result
 
 
@@ -91,7 +97,12 @@ def run_desk_queries(engine: Engine, as_of: date) -> dict[str, list[dict]]:
     minute_stats: dict[str, dict[str, Decimal | int]] = defaultdict(lambda: {"weighted": Decimal(0), "volume": 0, "min": None, "max": None})
     for row_id in range(minute_table.row_count):
         row = minute_table.row(row_id)
-        if row["ts"].date() != as_of or not row["volume"]:
+        local_time = row["ts"].astimezone(ZoneInfo("America/New_York"))
+        if (
+            local_time.date() != as_of
+            or not (time(9, 30) <= local_time.time() < time(16))
+            or not row["volume"]
+        ):
             continue
         entry = minute_stats[str(row["symbol"])]
         price = row["vwap"] or row["close"]
