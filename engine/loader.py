@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from time import perf_counter_ns
 
 from market_brief.db import query
 
@@ -43,4 +44,11 @@ def load_hot_window(
     engine.register(daily_table)
     engine.register(minute_table)
     engine.register(companies_table)
+    # The sector path treats this as a materialized in-memory view.  Construct it
+    # during load, not in the benchmark warmup, and retain its cost for disclosure.
+    from .desk import _daily_by_symbol
+
+    start = perf_counter_ns()
+    _daily_by_symbol(engine)
+    engine.load_metrics["daily_rows_by_symbol_ms"] = (perf_counter_ns() - start) / 1_000_000
     return engine

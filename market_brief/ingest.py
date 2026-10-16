@@ -1,7 +1,7 @@
 import csv
 import logging
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from . import alpaca
@@ -10,6 +10,7 @@ from .db import connection, execute_values, query
 from .edgar import sec_sector, upsert_companies
 
 LOGGER = logging.getLogger(__name__)
+PRICE_PRECISION = Decimal("0.000001")
 
 
 def load_universe(path: str | Path = "data/universe.csv") -> list[str]:
@@ -92,18 +93,35 @@ def _adjustment_changed_symbols(records: list[dict]) -> set[str]:
         prior = stored.get(key)
         if prior is None:
             continue
-        refreshed = (record["o"], record["h"], record["l"], record["c"], record["v"])
-        current = (prior["open"], prior["high"], prior["low"], prior["close"], prior["volume"])
-        if any(Decimal(str(left)) != Decimal(str(right)) for left, right in zip(refreshed, current, strict=True)):
+        refreshed_prices = (record["o"], record["h"], record["l"], record["c"])
+        current_prices = (prior["open"], prior["high"], prior["low"], prior["close"])
+        price_changed = any(
+            Decimal(str(left)).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
+            != Decimal(str(right)).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
+            for left, right in zip(refreshed_prices, current_prices, strict=True)
+        )
+        volume_changed = int(record["v"]) != int(prior["volume"])
+        if price_changed or volume_changed:
             changed.add(record["symbol"])
     return changed
 
 
 def _repair_adjusted_daily(symbols: set[str], as_of: date) -> list[dict]:
+    if not symbols:
+        return []
+    starts = {
+        row["symbol"]: row["start_date"]
+        for row in query(
+            """SELECT symbol, min(trading_date) AS start_date
+               FROM daily_bars WHERE symbol = ANY(%s) GROUP BY symbol""",
+            (sorted(symbols),),
+        )
+    }
     repaired: list[dict] = []
     for symbol in sorted(symbols):
-        LOGGER.warning("adjustment change detected for %s; refreshing full daily history", symbol)
-        repaired.extend(alpaca.bars([symbol], "1Day", date(2000, 1, 1), as_of + timedelta(days=1)))
+        start = starts.get(symbol) or as_of - timedelta(days=365)
+        LOGGER.warning("adjustment change detected for %s; refreshing daily history from %s", symbol, start)
+        repaired.extend(alpaca.bars([symbol], "1Day", start, as_of + timedelta(days=1)))
     return repaired
 
 

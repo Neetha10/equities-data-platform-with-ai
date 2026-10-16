@@ -47,7 +47,7 @@ def _materialize_duckdb_table(duck, name: str, rows: list[dict], pandas) -> None
     duck.unregister(staging_name)
 
 
-def _write(raw: list[dict], output: Path) -> None:
+def _write(raw: list[dict], output: Path, load_metrics: dict[str, float]) -> None:
     output.mkdir(parents=True, exist_ok=True)
     with (output / "raw_samples.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
@@ -64,6 +64,9 @@ def _write(raw: list[dict], output: Path) -> None:
     for (system, case), values in sorted(grouped.items()):
         p95 = quantiles(values, n=100, method="inclusive")[94] if len(values) > 1 else values[0]
         lines.append(f"| {system} | {case} | {median(values):.3f} | {p95:.3f} |")
+    if load_metrics:
+        lines.extend(["", "## Setup costs (excluded from timed queries)", ""])
+        lines.extend(f"- {name}: {milliseconds:.3f} ms" for name, milliseconds in sorted(load_metrics.items()))
     (output / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -130,7 +133,7 @@ def main() -> None:
             for system, callback in (("postgres", postgres), ("duckdb", duck_callback), ("custom_engine", custom)):
                 for iteration, milliseconds in enumerate(_time(callback, args.repetitions), start=1):
                     raw.append({"system": system, "case": case, "iteration": iteration, "milliseconds": milliseconds})
-    _write(raw, args.output)
+    _write(raw, args.output, engine.load_metrics)
     print(f"wrote {args.output / 'summary.md'} and raw_samples.csv")
 
 

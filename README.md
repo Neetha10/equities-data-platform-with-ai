@@ -83,16 +83,16 @@ Install it with `crontab -e` only after the manual `make nightly` succeeds. Cron
 
 ## Verification model
 
-The query results are the source of every numeric claim. Cloud LLM providers receive that result set; the local Ollama path rewrites an already-approved template brief. Before any draft is saved, the validator checks its numeric tokens against the relevant query result and ticker. A mismatch discards the draft and saves the same checked template. This reduces unsupported numeric claims, but it does not replace human review of qualitative language or market interpretation.
+The query results are the source of every numeric claim. Cloud LLM providers receive that result set; the local Ollama path rewrites an already-approved template brief. Before any draft is saved, the validator checks its numeric tokens against the relevant query result and ticker. A mismatch discards the draft and saves the same checked template. This reduces unsupported numeric claims, but it does not replace human review of qualitative language or market interpretation. In particular, it does not yet verify whether words such as “rose” or “fell” have the correct sign, or whether a valid number is attributed to the right measure (for example, a return versus a gap).
 
 ## Results
 
-The engine architecture and reproducible benchmark protocol are in [`engine/README.md`](engine/README.md) and [`docs/benchmarks.md`](docs/benchmarks.md). On the recorded 2026-10-15 snapshot of **100 symbols** and **715,594** bars, the harness ran one warmup plus **100** timed executions per case on a MacBook Air (Apple M3, 16 GB RAM, macOS 15.3.2, Python 3.14.7, PostgreSQL 16, DuckDB 1.5.6). Connection setup, hot-window loading, and DuckDB table materialization were excluded from timing.
+The engine architecture and reproducible benchmark protocol are in [`engine/README.md`](engine/README.md) and [`docs/benchmarks.md`](docs/benchmarks.md). The 2026-10-15 snapshot was rebuilt from **SIP** data and contains **100 symbols** and **1,121,108** minute bars. The harness ran one warmup plus **100** timed executions per case on a MacBook Air (Apple M3, 16 GB RAM, macOS 15.3.2, Python 3.14.7, PostgreSQL 16, DuckDB 1.5.6). Connection setup, hot-window loading, DuckDB table materialization, and the custom engine’s prebuilt per-symbol daily-row view were excluded from timing; the generated benchmark summary records that view’s setup cost. The engine and PostgreSQL implementations of all seven daily queries were also verified equal on this snapshot with `RUN_DB_INTEGRATION=1`.
 
 | Workload | Custom engine median | PostgreSQL median | DuckDB median |
 | --- | ---: | ---: | ---: |
-| Daily 30-row range lookup | 0.041 ms | 0.215 ms | 0.505 ms |
-| Minute 390-row range lookup | 0.498 ms | 0.416 ms | 0.599 ms |
-| Sector return / group-by | 1.255 ms | 16.354 ms | 1.937 ms |
+| Daily 30-row range lookup | 0.041 ms | 0.240 ms | 0.504 ms |
+| Minute 390-row range lookup | 0.868 ms | 0.534 ms | 0.734 ms |
+| Sector return / group-by | 1.298 ms | 17.001 ms | 2.042 ms |
 
-The custom engine wins the daily lookup because it executes against a preloaded in-process columnar window with no client/server round trip. PostgreSQL narrowly wins the minute lookup, while the custom engine and DuckDB both outperform PostgreSQL on this small sector aggregation. The custom engine remains a constrained learning implementation: its snapshot load cost and limited SQL grammar are real tradeoffs. Raw samples and the full benchmark summary are retained with the generated artifacts.
+The custom engine wins the daily lookup because it executes against a preloaded in-process columnar window with no client/server round trip. PostgreSQL narrowly wins the minute lookup, while the custom engine and DuckDB both outperform PostgreSQL on this small sector aggregation. The sector speedup includes the prebuilt per-symbol daily-row view; the PostgreSQL parity query also evaluates `lag()` over each symbol’s available history before selecting the session. The custom engine remains a constrained learning implementation: its snapshot load cost and limited SQL grammar are real tradeoffs. Raw samples and the full benchmark summary are retained with the generated artifacts.

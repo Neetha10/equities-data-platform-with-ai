@@ -49,6 +49,26 @@ def test_accepts_natural_language_without_a_negative_sign(results: dict[str, lis
     validate_numeric_claims("BBB fell 1.20%.", results, date(2026, 10, 15))
 
 
+def test_keeps_decimal_claim_and_ticker_in_the_same_sentence() -> None:
+    ledger = {
+        "01_returns": [{"symbol": "DELL", "return_pct": Decimal("-6.59")}],
+        "03_volume_spikes": [{"symbol": "DELL", "volume_multiple": Decimal("3.24")}],
+    }
+    validate_numeric_claims("DELL fell 6.59% on 3.24x its usual volume.", ledger, date(2026, 10, 15))
+
+
+def test_validates_multiple_decimal_claims_with_their_nearest_tickers() -> None:
+    ledger = {
+        "01_returns": [
+            {"symbol": "NOW", "return_pct": Decimal("6.15")},
+            {"symbol": "DELL", "return_pct": Decimal("-6.59")},
+        ]
+    }
+    validate_numeric_claims(
+        "Shares closed up 6.15% for NOW, and DELL dropped 6.59%.", ledger, date(2026, 10, 15)
+    )
+
+
 def test_rejection_is_logged_and_falls_back(monkeypatch, caplog, results: dict[str, list[dict]], tmp_path) -> None:
     monkeypatch.setattr(brief, "llm_brief", lambda *_: "AAA rose 999%.")
     monkeypatch.setattr(brief, "llm_is_configured", lambda: True)

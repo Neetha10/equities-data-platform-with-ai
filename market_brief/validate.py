@@ -7,6 +7,9 @@ from decimal import Decimal, InvalidOperation
 
 NUMBER = re.compile(r"(?<![A-Za-z_])-?\$?\d[\d,]*(?:\.\d+)?(?=%|x\b|\b)")
 ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+# A decimal point is not a sentence boundary.  Keep this pattern shared by the
+# sentence-window lookup so a claim such as "DELL fell 6.59%" retains DELL.
+SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
 
 
 class ValidationError(ValueError):
@@ -70,9 +73,9 @@ def _numbers_by_symbol(results: dict[str, list[dict]]) -> dict[str, set[str]]:
 
 
 def _sentence(text: str, position: int) -> tuple[int, str]:
-    start = max(text.rfind(marker, 0, position) for marker in ("\n", ".", "!", "?")) + 1
-    ends = [text.find(marker, position) for marker in ("\n", ".", "!", "?")]
-    end = min(end for end in ends if end >= 0) if any(end >= 0 for end in ends) else len(text)
+    boundaries = list(SENTENCE_END.finditer(text))
+    start = max((boundary.end() for boundary in boundaries if boundary.end() <= position), default=0)
+    end = next((boundary.start() for boundary in boundaries if boundary.start() >= position), len(text))
     return start, text[start:end]
 
 

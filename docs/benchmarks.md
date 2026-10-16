@@ -9,7 +9,9 @@ AS_OF=2026-10-15 make benchmark
 
 It does one untimed warmup and 20 timed iterations by default; pass `--repetitions 100` for the published results. Loading data is deliberately excluded from the timed section. Results are written to `benchmarks/results/raw_samples.csv` and `benchmarks/results/summary.md`; the latter reports median and inclusive p95. Keep both artifacts with the exact machine, Python, PostgreSQL, DuckDB, OS, data row counts, and command used.
 
-For a fair execution-time comparison, the harness opens one PostgreSQL connection before timing and reuses it across iterations. It converts Decimal price columns to typed numeric columns and materializes DuckDB tables before warmup. The custom engine's hot window is also loaded before timing. Connection setup and data loading are therefore intentionally outside the reported query timings.
+For a fair execution-time comparison, the harness opens one PostgreSQL connection before timing and reuses it across iterations. It converts Decimal price columns to typed numeric columns and materializes DuckDB tables before warmup. The custom engine's hot window is also loaded before timing, including its per-symbol daily-row materialized view used by sector performance. Connection setup and data loading are therefore intentionally outside the reported query timings; the generated summary records the materialized-view build cost separately.
+
+The PostgreSQL sector baseline calculates `lag(close)` over each symbol's available history before filtering to the requested session. That is representative of the versioned parity query, but it is broader work than the custom engine's preloaded daily window; do not interpret the sector row as a pure storage-engine comparison.
 
 Interpretation guidance:
 

@@ -110,6 +110,8 @@ def _matches(actual: Scalar, operator: str, expected: Scalar) -> bool:
 class Engine:
     def __init__(self):
         self.tables: dict[str, ColumnarTable] = {}
+        # Loading and materialization costs are recorded separately from query timings.
+        self.load_metrics: dict[str, float] = {}
 
     def register(self, table: ColumnarTable) -> None:
         self.tables[table.name] = table
