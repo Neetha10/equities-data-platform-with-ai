@@ -50,6 +50,13 @@ def test_btree_range_and_cost_based_index_choice() -> None:
     assert plan.strategy == "index_range_scan"
 
 
+def test_btree_builds_when_an_interior_level_has_a_single_child() -> None:
+    # Five leaves at fanout two produces a final first-level node with one child.
+    tree = BPlusTree([(key, key) for key in range(10)], leaf_size=2, fanout=2)
+    assert tree.range() == list(range(10))
+    assert tree.range(7, 9) == [7, 8, 9]
+
+
 def test_date_only_timestamp_literal_inherits_utc() -> None:
     engine = Engine()
     engine.register(_bars())

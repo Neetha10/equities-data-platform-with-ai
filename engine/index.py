@@ -55,9 +55,17 @@ class BPlusTree(Generic[Key, Value]):
             for start in range(0, len(level), self.fanout):
                 children = level[start : start + self.fanout]
                 # Separators are the first key of every child after the first.
-                parent_level.append(_Node(keys=[child.keys[0] for child in children[1:]], children=children))
+                # An interior child with one child has no separator of its own,
+                # so descend to its leftmost leaf to find the subtree's first key.
+                parent_level.append(_Node(keys=[self._first_key(child) for child in children[1:]], children=children))
             level = parent_level
         return level[0]
+
+    @staticmethod
+    def _first_key(node: _Node[Key, Value]) -> Key:
+        while node.children:
+            node = node.children[0]
+        return node.keys[0]
 
     def _leaf_for(self, key: Key) -> _Node[Key, Value] | None:
         node = self.root
