@@ -1,10 +1,12 @@
 import argparse
 import logging
 from datetime import date
+from pathlib import Path
 
 from .analytics import run_queries
 from .brief import create_brief
 from .ingest import backfill, nightly
+from .replay import replay_ollama, write_replay_report
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,12 +29,27 @@ def main() -> None:
     brief_parser.add_argument("--as-of", type=_date, default=date.today())
     all_parser = commands.add_parser("run-all")
     all_parser.add_argument("--as-of", type=_date, default=date.today())
+    replay_parser = commands.add_parser("replay-ollama", help="replay historical sessions and count validator outcomes")
+    replay_parser.add_argument("--end-as-of", type=_date, default=date.today())
+    replay_parser.add_argument("--count", type=int, default=20)
+    replay_parser.add_argument("--output", default=None)
     args = parser.parse_args()
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if args.command == "backfill":
         LOGGER.info("backfill result: %s", backfill(args.daily_days, args.minute_days, args.as_of))
     elif args.command == "nightly":
         LOGGER.info("nightly result: %s", nightly(args.as_of))
+    elif args.command == "replay-ollama":
+        report = replay_ollama(args.end_as_of, args.count)
+        output = args.output or f"outputs/ollama_replay_{args.end_as_of.isoformat()}.md"
+        destination = write_replay_report(report, Path(output))
+        LOGGER.info(
+            "wrote %s (accepted=%s rejected=%s errors=%s)",
+            destination,
+            report["accepted"],
+            report["rejected"],
+            report["errors"],
+        )
     else:
         if args.command == "run-all":
             nightly(args.as_of)

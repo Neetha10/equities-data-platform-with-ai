@@ -62,6 +62,12 @@ Generated briefs land in `briefs/brief_YYYY-MM-DD.md` and `.html`. Pass `--as-of
 PYTHONPATH=. .venv/bin/python -m market_brief.cli run-all --as-of 2026-10-15
 ```
 
+To measure local-model guardrail behavior without overwriting briefs, replay the most recent completed sessions through Ollama. The command writes per-session outcomes and aggregate acceptance/rejection counts, but never saves raw model prose:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m market_brief.cli replay-ollama --end-as-of 2026-10-15 --count 20
+```
+
 The 100-symbol seed universe is deliberately editable. Keep it to liquid US-listed names and check provider symbol conventions and your data entitlement before adding symbols.
 
 ## Data-provider notes
