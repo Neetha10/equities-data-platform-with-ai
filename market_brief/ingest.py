@@ -1,12 +1,13 @@
 import csv
 import logging
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from . import alpaca
 from .config import settings
-from .db import connection, execute_values
-from .edgar import upsert_companies
+from .db import connection, execute_values, query
+from .edgar import sec_sector, upsert_companies
 
 LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +56,57 @@ def _minute_rows(records: list[dict]) -> list[tuple]:
     ]
 
 
+def _ensure_companies(symbols: list[str]) -> int:
+    existing = {row["symbol"] for row in query("SELECT symbol FROM companies WHERE symbol = ANY(%s)", (symbols,))}
+    missing = [symbol for symbol in symbols if symbol not in existing]
+    return upsert_companies(missing) if missing else 0
+
+
+def _refresh_company_sectors() -> int:
+    rows = query("SELECT symbol, sic, sector FROM companies")
+    updates = [
+        (sec_sector(row["sic"], row["symbol"]), row["symbol"])
+        for row in rows
+        if sec_sector(row["sic"], row["symbol"]) != row["sector"]
+    ]
+    return execute_values("UPDATE companies SET sector = %s, updated_at = now() WHERE symbol = %s", updates)
+
+
+def _adjustment_changed_symbols(records: list[dict]) -> set[str]:
+    """Find refreshed sessions whose adjusted OHLCV no longer matches durable history."""
+    if not records:
+        return set()
+    symbols = sorted({record["symbol"] for record in records})
+    dates = [datetime.fromisoformat(record["t"]).date() for record in records]
+    stored = {
+        (row["symbol"], row["trading_date"]): row
+        for row in query(
+            """SELECT symbol, trading_date, open, high, low, close, volume
+               FROM daily_bars WHERE symbol = ANY(%s) AND trading_date BETWEEN %s AND %s""",
+            (symbols, min(dates), max(dates)),
+        )
+    }
+    changed: set[str] = set()
+    for record in records:
+        key = (record["symbol"], datetime.fromisoformat(record["t"]).date())
+        prior = stored.get(key)
+        if prior is None:
+            continue
+        refreshed = (record["o"], record["h"], record["l"], record["c"], record["v"])
+        current = (prior["open"], prior["high"], prior["low"], prior["close"], prior["volume"])
+        if any(Decimal(str(left)) != Decimal(str(right)) for left, right in zip(refreshed, current, strict=True)):
+            changed.add(record["symbol"])
+    return changed
+
+
+def _repair_adjusted_daily(symbols: set[str], as_of: date) -> list[dict]:
+    repaired: list[dict] = []
+    for symbol in sorted(symbols):
+        LOGGER.warning("adjustment change detected for %s; refreshing full daily history", symbol)
+        repaired.extend(alpaca.bars([symbol], "1Day", date(2000, 1, 1), as_of + timedelta(days=1)))
+    return repaired
+
+
 DAILY_UPSERT = """
 INSERT INTO daily_bars (symbol, trading_date, open, high, low, close, volume, trade_count, vwap, source_feed)
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -99,7 +151,18 @@ def nightly(as_of: date | None = None) -> dict[str, int]:
     run_id = _run_started("nightly")
     written = 0
     try:
+        _ensure_companies(symbols)
+        _refresh_company_sectors()
         daily = list(alpaca.bars(symbols, "1Day", as_of - timedelta(days=3), as_of + timedelta(days=1)))
+        repaired_daily = _repair_adjusted_daily(_adjustment_changed_symbols(daily), as_of)
+        if repaired_daily:
+            daily_by_key = {
+                (record["symbol"], datetime.fromisoformat(record["t"]).date()): record for record in daily
+            }
+            daily_by_key.update(
+                {(record["symbol"], datetime.fromisoformat(record["t"]).date()): record for record in repaired_daily}
+            )
+            daily = list(daily_by_key.values())
         end = datetime.combine(as_of + timedelta(days=1), time.min, tzinfo=UTC)
         # Four calendar days reaches back to Friday during a Monday evening run.
         minute = list(alpaca.bars(symbols, "1Min", end - timedelta(days=4), end))

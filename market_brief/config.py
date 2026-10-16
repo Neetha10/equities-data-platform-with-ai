@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     database_url: str
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
-    alpaca_feed: str = "iex"
+    alpaca_feed: str = "sip"
     sec_user_agent: str = "EquitiesDailyBrief admin@example.com"
     llm_provider: str = "deterministic"
     openai_api_key: str = ""

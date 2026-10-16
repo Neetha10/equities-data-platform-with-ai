@@ -41,7 +41,7 @@ def deterministic_brief(results: dict[str, list[dict]], as_of: date) -> str:
         row = volumes[0]
         lines.append(
             f"{row['symbol']} had the largest relative turnover at {_number(row['volume_multiple'])}x "
-            f"its 20-day average volume."
+            f"its trailing average volume."
         )
     if sectors:
         best, worst = sectors[0], sectors[-1]
@@ -174,7 +174,8 @@ def create_brief(results: dict[str, list[dict]], as_of: date, output_dir: str | 
         generated = False
     try:
         validate_numeric_claims(draft, results, as_of)
-    except ValidationError:
+    except ValidationError as exc:
+        LOGGER.warning("LLM draft rejected by numeric validation: %s", exc)
         draft = deterministic_brief(results, as_of)
         generated = False
         validate_numeric_claims(draft, results, as_of)
